@@ -174,7 +174,7 @@ class BST:
             parent.right = child
         self.__writes += 1
     def height(self):
-        levels = 0
+        levels = -1
         level = []
         if self.root is not None:
             level.append(self.root)

@@ -1,20 +1,20 @@
-import multiprocessing
 import os
 import random
-from numba import njit, prange, get_num_threads, threading_layer
+from concurrent.futures import ThreadPoolExecutor
+from numba import njit, prange
 from utils import menu, measure, benchmark, print_table, Node
 
 TREE_SIZE = 1000000
 PRIME_LIMITS = [100000, 1000000, 5000000]
 SAMPLES = 5
-subtrees = []
-MAX_PROCESSES = os.cpu_count()
-PROCESSES = []
-p = 1
 
-while p <= MAX_PROCESSES:
-    PROCESSES.append(p)
-    p *= 2
+MAX_THREADS = os.cpu_count()
+THREADS = []
+t = 1
+
+while t <= MAX_THREADS:
+    THREADS.append(t)
+    t *= 2
 
 def insert_random(root, value):
     current = root
@@ -35,7 +35,7 @@ def build_tree(n):
     root = Node(values[0])
     for v in values[1:]:
         insert_random(root, v)
-    return root, values
+    return root
 
 def subtree_max(node):
     best = -1
@@ -62,11 +62,9 @@ def split_tree(root):
             subtrees.append(child.right)
     return top, subtrees
 
-def worker(t):
-    return subtree_max(subtrees[t])
-
-def tree_max_par(pool, top):
-    results = pool.map(worker, range(len(subtrees)))
+def tree_max_par(threads, top, subtrees):
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        results = list(executor.map(subtree_max, subtrees))
     best = max(results)
     for node in top:
         if node.value > best:
@@ -74,9 +72,8 @@ def tree_max_par(pool, top):
     return best
 
 def ex01():
-    root, values = build_tree(TREE_SIZE)
-    m = subtree_max(root)
-    print(f"Maior: {m} correto: {m == max(values)}")
+    root = build_tree(TREE_SIZE)
+    print(f"Maior: {subtree_max(root)}")
 
     def run(n):
         return measure(subtree_max, root) * 1000,
@@ -94,40 +91,29 @@ def ex01():
     )
 
 def ex04():
-    global subtrees
-    root, values = build_tree(TREE_SIZE)
+    root = build_tree(TREE_SIZE)
     top, subtrees = split_tree(root)
-    print(f"Núcleos: {MAX_PROCESSES} subárvores: {len(subtrees)}")
-    ctx = multiprocessing.get_context("fork")
-    pools = {}
-    for p in PROCESSES:
-        pools[p] = ctx.Pool(p)
+    print(f"Núcleos: {MAX_THREADS} subárvores: {len(subtrees)}")
+    print(f"Maior: {tree_max_par(MAX_THREADS, top, subtrees)}")
 
-    m_seq = subtree_max(root)
-    m_par = tree_max_par(pools[PROCESSES[-1]], top)
-    print(f"Maior seq = {m_seq} maior par = {m_par} ok: {m_seq == m_par}")
-
-    def run(processes):
+    def run(threads):
         t_seq = measure(subtree_max, root, runs=3)
-        t_par = measure(tree_max_par, pools[processes], top, runs=3)
+        t_par = measure(tree_max_par, threads, top, subtrees, runs=3)
         speedup = t_seq / t_par
         return (
             t_seq * 1000,
             t_par * 1000,
             speedup,
-            speedup / processes * 100
+            speedup / threads * 100
         )
-    for p in PROCESSES:
-        run(p)
+    run(MAX_THREADS)
     rows, headers = benchmark(
-        axes={"Processos": PROCESSES},
+        axes={"Threads": THREADS},
         measure_fn=run,
         metrics=["seq (ms)", "par (ms)", "speedup", "eficiência (%)"],
         samples=SAMPLES,
         dp=True
     )
-    for p in pools.values():
-        p.close()
     print_table(
         title=f"Maior valor, N={TREE_SIZE}, seq x par ({SAMPLES} amostras, média e dp)",
         rows=rows,
@@ -185,12 +171,8 @@ def ex02():
 def ex03():
     count_primes_seq(10)
     count_primes_par(10)
-    print(f"Número de Threads: {get_num_threads()}")
-    print(f"Motor de threads: {threading_layer()}")
     for n in PRIME_LIMITS:
-        c_seq = count_primes_seq(n)
-        c_par = count_primes_par(n)
-        print(f"N={n} primos={c_par} ok={c_seq == c_par}")
+        print(f"N={n} primos={count_primes_par(n)}")
     def run(n):
         t_seq = measure(count_primes_seq, n, runs=1)
         t_par = measure(count_primes_par, n, runs=1)
